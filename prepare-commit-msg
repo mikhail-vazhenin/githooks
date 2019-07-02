@@ -1,0 +1,43 @@
+#!/bin/bash
+#
+# Automatically add branch name and branch description to every commit message except merge commit.
+#
+TASK_KEY_REGEX="[a-zA-Z0-9]{1,5}\-\d+"
+BRANCH_PREFIX='[Ff]eature\/|[Hh]otfix\/|[Rr]elease\/'
+#set your youtrack token with git config youtrack.token 'your token'
+YOUTRACK_TOKEN=$(git config youtrack.token)
+YOUTRACK_HOST=$(git config youtrack.host)
+
+COMMIT_EDITMSG=$1
+
+COMMENT_ISSUE_KEY=$(cat $COMMIT_EDITMSG|grep -ohP $TASK_KEY_REGEX)
+
+if [ -z "$COMMENT_ISSUE_KEY" ] ; then
+    BRANCH_NAME_LONG=$(git branch | grep '*' | sed 's/* //') 
+    DESCRIPTION=$(git config branch."$BRANCH_NAME_LONG".description)
+    BRANCH_NAME_SHORT=$(echo $BRANCH_NAME_LONG | sed -E "s:^$BRANCH_PREFIX::")
+    BRANCH_ISSUE_KEY=$(echo $BRANCH_NAME_SHORT|grep -ohP $TASK_KEY_REGEX)
+
+    if [ -z "$BRANCH_ISSUE_KEY" ]
+    then
+        echo "Commit aborted. Issue key not found in commit message or branch name" 1>&2
+        exit 1
+    fi
+
+    echo "[$BRANCH_ISSUE_KEY]: $(cat $COMMIT_EDITMSG)" > $COMMIT_EDITMSG
+    if [ -n "$DESCRIPTION" ] 
+    then
+        echo "" >> $COMMIT_EDITMSG
+        echo $DESCRIPTION >> $COMMIT_EDITMSG
+    fi 
+fi
+
+
+ISSUE_KEY=${COMMENT_ISSUE_KEY-${BRANCH_ISSUE_KEY-default}}
+STATUS=$(curl -s -o /dev/null -I -w "%{http_code}" $YOUTRACK_HOST/rest/issue/$ISSUE_KEY -H 'Authorization: Bearer '$YOUTRACK_TOKEN)
+    
+if [ $STATUS -ne "200" ]
+then
+    echo "Commit aborted. Issue [$ISSUE_KEY] not found in Youtrack. Response with status [$STATUS"] 1>&2
+    exit 1
+fi
